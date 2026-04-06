@@ -1,0 +1,318 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build binaries + platform installers
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: zoio
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: zoio
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: zoio
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: zoio.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libglib2.0-dev
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Run tests
+        run: cargo test --all-targets --target ${{ matrix.target }}
+
+      - name: Prepare binary artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact }} dist/
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a ../zoio-${{ github.event.release.tag_name }}-${{ matrix.target }}.zip ${{ matrix.artifact }}
+          else
+            tar czf ../zoio-${{ github.event.release.tag_name }}-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
+          fi
+
+      - name: Upload binary archive
+        uses: softprops/action-gh-release@v2
+        with:
+          files: zoio-${{ github.event.release.tag_name }}-${{ matrix.target }}.*
+
+  # ---------------------------------------------------------------------------
+  # macOS .dmg (universal binary from both arch builds)
+  # ---------------------------------------------------------------------------
+  package-dmg:
+    name: Package .dmg (macOS)
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-dmg
+
+      - name: Build universal binary
+        run: |
+          cargo build --release --target x86_64-apple-darwin
+          cargo build --release --target aarch64-apple-darwin
+          mkdir -p target/release
+          lipo -create \
+            target/x86_64-apple-darwin/release/zoio \
+            target/aarch64-apple-darwin/release/zoio \
+            -output target/release/zoio
+
+      - name: Build DMG
+        run: ./scripts/build-dmg.sh ${{ github.event.release.tag_name }}
+
+      - name: Upload DMG
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/zoio-${{ github.event.release.tag_name }}-macos.dmg
+
+  # ---------------------------------------------------------------------------
+  # Linux .deb
+  # ---------------------------------------------------------------------------
+  package-deb:
+    name: Package .deb (Linux)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-deb
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxdo-dev libglib2.0-dev
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Build .deb package
+        run: cargo deb --no-build
+
+      - name: Rename .deb with tag
+        run: |
+          DEB=$(ls target/debian/*.deb | head -1)
+          cp "$DEB" "target/debian/zoio-${{ github.event.release.tag_name }}-amd64.deb"
+
+      - name: Upload .deb
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/debian/zoio-${{ github.event.release.tag_name }}-amd64.deb
+
+  # ---------------------------------------------------------------------------
+  # Windows .msi
+  # ---------------------------------------------------------------------------
+  package-msi:
+    name: Package .msi (Windows)
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-msi
+
+      - name: Install WiX Toolset
+        run: |
+          dotnet tool install --global wix --version 4.0.6
+          wix extension add WixToolset.UI.wixext/4.0.6 -g
+
+      - name: Install cargo-wix
+        run: cargo install cargo-wix
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Initialize WiX and build .msi
+        run: |
+          cargo wix init --no-build
+          cargo wix --no-build --nocapture
+
+      - name: Rename .msi with tag
+        shell: bash
+        run: |
+          MSI=$(ls target/wix/*.msi | head -1)
+          cp "$MSI" "target/wix/zoio-${{ github.event.release.tag_name }}-x86_64.msi"
+
+      - name: Upload .msi
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/wix/zoio-${{ github.event.release.tag_name }}-x86_64.msi
+
+  # ---------------------------------------------------------------------------
+  # Update Homebrew tap
+  # ---------------------------------------------------------------------------
+  update-homebrew-tap:
+    name: Update Homebrew Tap
+    needs: package-dmg
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get release info
+        id: release
+        run: |
+          TAG=${{ github.event.release.tag_name }}
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download assets and compute checksums
+        id: sha
+        run: |
+          BASE_URL="https://github.com/marcelotrevisani/zoio/releases/download/${{ github.event.release.tag_name }}"
+
+          # macOS DMG
+          DMG_URL="${BASE_URL}/zoio-${{ github.event.release.tag_name }}-macos.dmg"
+          for i in $(seq 1 30); do
+            if curl -sLI "$DMG_URL" | grep -q "200"; then break; fi
+            echo "Waiting for DMG asset... (attempt $i)"
+            sleep 10
+          done
+          curl -sL "$DMG_URL" -o zoio.dmg
+          DMG_SHA=$(sha256sum zoio.dmg | awk '{print $1}')
+          echo "dmg_sha256=$DMG_SHA" >> "$GITHUB_OUTPUT"
+
+          # macOS x86_64 tarball
+          X86_URL="${BASE_URL}/zoio-${{ github.event.release.tag_name }}-x86_64-apple-darwin.tar.gz"
+          curl -sL "$X86_URL" -o zoio-x86_64.tar.gz
+          X86_SHA=$(sha256sum zoio-x86_64.tar.gz | awk '{print $1}')
+          echo "x86_sha256=$X86_SHA" >> "$GITHUB_OUTPUT"
+
+          # macOS aarch64 tarball
+          ARM_URL="${BASE_URL}/zoio-${{ github.event.release.tag_name }}-aarch64-apple-darwin.tar.gz"
+          curl -sL "$ARM_URL" -o zoio-aarch64.tar.gz
+          ARM_SHA=$(sha256sum zoio-aarch64.tar.gz | awk '{print $1}')
+          echo "arm_sha256=$ARM_SHA" >> "$GITHUB_OUTPUT"
+
+          # Linux x86_64 tarball
+          LINUX_URL="${BASE_URL}/zoio-${{ github.event.release.tag_name }}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -sL "$LINUX_URL" -o zoio-linux.tar.gz
+          LINUX_SHA=$(sha256sum zoio-linux.tar.gz | awk '{print $1}')
+          echo "linux_sha256=$LINUX_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: marcelotrevisani/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update zoio formula
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
+          DMG_SHA256: ${{ steps.sha.outputs.dmg_sha256 }}
+          X86_SHA256: ${{ steps.sha.outputs.x86_sha256 }}
+          ARM_SHA256: ${{ steps.sha.outputs.arm_sha256 }}
+          LINUX_SHA256: ${{ steps.sha.outputs.linux_sha256 }}
+        run: |
+          mkdir -p homebrew-tap/Formula
+          cat > homebrew-tap/Formula/zoio.rb << FORMULA
+          class Zoio < Formula
+            desc "Cross-platform process resource monitor with real-time plots and CSV export"
+            homepage "https://github.com/marcelotrevisani/zoio"
+            version "$VERSION"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/marcelotrevisani/zoio/releases/download/v#{version}/zoio-v#{version}-aarch64-apple-darwin.tar.gz"
+                sha256 "$ARM_SHA256"
+              else
+                url "https://github.com/marcelotrevisani/zoio/releases/download/v#{version}/zoio-v#{version}-x86_64-apple-darwin.tar.gz"
+                sha256 "$X86_SHA256"
+              end
+            end
+
+            on_linux do
+              url "https://github.com/marcelotrevisani/zoio/releases/download/v#{version}/zoio-v#{version}-x86_64-unknown-linux-gnu.tar.gz"
+              sha256 "$LINUX_SHA256"
+            end
+
+            def install
+              bin.install "zoio"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/zoio --version", 2)
+            end
+          end
+          FORMULA
+
+      - name: Update zoio cask (DMG)
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
+          DMG_SHA256: ${{ steps.sha.outputs.dmg_sha256 }}
+        run: |
+          mkdir -p homebrew-tap/Casks
+          cat > homebrew-tap/Casks/zoio.rb << CASK
+          cask "zoio" do
+            version "$VERSION"
+            sha256 "$DMG_SHA256"
+
+            url "https://github.com/marcelotrevisani/zoio/releases/download/v#{version}/zoio-v#{version}-macos.dmg"
+            name "zoio"
+            desc "Cross-platform process resource monitor with real-time plots and CSV export"
+            homepage "https://github.com/marcelotrevisani/zoio"
+
+            binary "zoio"
+
+            postflight do
+              system_command "/usr/bin/xattr", args: ["-cr", "#{staged_path}/zoio"]
+            end
+          end
+          CASK
+
+      - name: Commit and push
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/zoio.rb Casks/zoio.rb
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "Update zoio to ${{ steps.release.outputs.version }}"
+          git push
