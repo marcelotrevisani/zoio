@@ -203,17 +203,25 @@ fn stopping_preserves_histories_and_allows_export() {
         sleep(Duration::from_millis(120));
     }
     let before = state.histories.get(&pid).unwrap().len();
+    let total_samples_before: usize = state.histories.values().map(|h| h.len()).sum();
     state.stop_monitoring();
     let after = state.histories.get(&pid).unwrap().len();
+    let total_samples_after: usize = state.histories.values().map(|h| h.len()).sum();
     assert_eq!(
         before, after,
         "stop_monitoring must not drop already-captured samples"
+    );
+    assert_eq!(
+        total_samples_before, total_samples_after,
+        "stop_monitoring must not drop any process histories"
     );
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("post-stop.csv");
     let rows = state.export_csv(&path).unwrap();
-    assert_eq!(rows, after);
+    // CSV contains rows from all tracked processes (on Windows, cmd spawns
+    // a child ping.exe that is also tracked), so compare against the total.
+    assert_eq!(rows, total_samples_after);
 }
 
 #[test]
