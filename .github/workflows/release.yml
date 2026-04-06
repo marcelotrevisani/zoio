@@ -170,7 +170,7 @@ jobs:
 
       - name: Initialize WiX and build .msi
         run: |
-          cargo wix init --no-build
+          cargo wix init
           cargo wix --no-build --nocapture
 
       - name: Rename .msi with tag
