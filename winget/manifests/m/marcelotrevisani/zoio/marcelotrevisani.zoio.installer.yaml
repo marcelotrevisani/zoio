@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+PackageIdentifier: marcelotrevisani.zoio
+PackageVersion: 0.2.1
+MinimumOSVersion: 10.0.0.0
+InstallerType: msi
+Scope: machine
+UpgradeBehavior: install
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/marcelotrevisani/zoio/releases/download/v0.2.1/zoio-v0.2.1-x86_64.msi
+    InstallerSha256: REPLACE_WITH_ACTUAL_SHA256
+ManifestType: installer
+ManifestVersion: 1.6.0
