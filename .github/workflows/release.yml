@@ -163,7 +163,7 @@ jobs:
           wix extension add WixToolset.UI.wixext/4.0.6 -g
 
       - name: Install cargo-wix
-        run: cargo install cargo-wix
+        run: cargo install cargo-wix --version 0.3.8
 
       - name: Build release binary
         run: cargo build --release

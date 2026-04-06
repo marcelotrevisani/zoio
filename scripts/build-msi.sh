@@ -11,7 +11,7 @@ set -euo pipefail
 
 if ! command -v cargo-wix &> /dev/null; then
     echo "Installing cargo-wix..."
-    cargo install cargo-wix
+    cargo install cargo-wix --version 0.3.8
 fi
 
 # Initialize WiX config if not present
