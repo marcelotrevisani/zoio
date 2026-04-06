@@ -16,7 +16,7 @@ fi
 
 # Initialize WiX config if not present
 if [ ! -d "wix" ]; then
-    cargo wix init --no-build
+    cargo wix init
 fi
 
 cargo wix --no-build --nocapture
