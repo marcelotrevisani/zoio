@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+
+PackageIdentifier: marcelotrevisani.zoio
+PackageVersion: 0.2.1
+PackageLocale: en-US
+Publisher: Marcelo Duarte Trevisani
+PublisherUrl: https://github.com/marcelotrevisani
+PackageName: zoio
+PackageUrl: https://github.com/marcelotrevisani/zoio
+License: MIT
+LicenseUrl: https://github.com/marcelotrevisani/zoio/blob/main/LICENSE
+ShortDescription: Cross-platform process resource monitor with real-time plots and CSV export
+Description: |-
+  zoio is a cross-platform process resource monitor.
+  Select processes via checkboxes or regex patterns, then watch their
+  CPU, memory, disk I/O, and network I/O in real time with four live plots.
+  Export captured sessions to CSV.
+Tags:
+  - monitoring
+  - process
+  - cpu
+  - memory
+  - system-monitor
+  - rust
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
